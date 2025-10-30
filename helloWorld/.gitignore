@@ -9,6 +9,8 @@ build/
 bld/
 [Bb]in/
 [Oo]bj/
+# 明确忽略所有 bin 目录
+**/bin/
 
 # Visual Studio files
 *.suo

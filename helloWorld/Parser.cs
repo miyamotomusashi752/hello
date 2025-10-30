@@ -245,334 +245,343 @@ namespace N_m3u8DL_CLI
                 m3u8CurrentKey = ParseKey(line);
             }
 
-            //逐行分析
-            using (StringReader sr = new StringReader(m3u8Content))
+            try
             {
-                string line;
-                double segDuration = 0;
-                string segUrl = string.Empty;
-                //#EXT-X-BYTERANGE:<n>[@<o>]
-                long expectByte = -1; //parm n
-                long startByte = 0;  //parm o
 
-                while ((line = sr.ReadLine()) != null)
+                //逐行分析
+                using (StringReader sr = new StringReader(m3u8Content))
                 {
-                    if (string.IsNullOrEmpty(line))
-                        continue;
-                    if (line.StartsWith(HLSTags.ext_m3u))
-                        isM3u = true;
-                    //只下载部分字节
-                    else if (line.StartsWith(HLSTags.ext_x_byterange))
+                    string line;
+                    double segDuration = 0;
+                    string segUrl = string.Empty;
+                    //#EXT-X-BYTERANGE:<n>[@<o>]
+                    long expectByte = -1; //parm n
+                    long startByte = 0;  //parm o
+
+                    while ((line = sr.ReadLine()) != null)
                     {
-                        string[] t = line.Replace(HLSTags.ext_x_byterange + ":", "").Split('@');
-                        if (t.Length > 0)
+                        if (string.IsNullOrEmpty(line))
+                            continue;
+                        if (line.StartsWith(HLSTags.ext_m3u))
+                            isM3u = true;
+                        //只下载部分字节
+                        else if (line.StartsWith(HLSTags.ext_x_byterange))
                         {
-                            if (t.Length == 1)
+                            string[] t = line.Replace(HLSTags.ext_x_byterange + ":", "").Split('@');
+                            if (t.Length > 0)
                             {
-                                expectByte = Convert.ToInt64(t[0]);
-                                segInfo.Add("expectByte", expectByte);
-                                segInfo.Add("startByte", segments.Last["startByte"].Value<long>() + segments.Last["expectByte"].Value<long>());
+                                if (t.Length == 1)
+                                {
+                                    expectByte = Convert.ToInt64(t[0]);
+                                    segInfo.Add("expectByte", expectByte);
+                                    segInfo.Add("startByte", segments.Last["startByte"].Value<long>() + segments.Last["expectByte"].Value<long>());
+                                }
+                                if (t.Length == 2)
+                                {
+                                    expectByte = Convert.ToInt64(t[0]);
+                                    startByte = Convert.ToInt64(t[1]);
+                                    segInfo.Add("expectByte", expectByte);
+                                    segInfo.Add("startByte", startByte);
+                                }
                             }
-                            if (t.Length == 2)
-                            {
-                                expectByte = Convert.ToInt64(t[0]);
-                                startByte = Convert.ToInt64(t[1]);
-                                segInfo.Add("expectByte", expectByte);
-                                segInfo.Add("startByte", startByte);
-                            }
+                            expectSegment = true;
                         }
-                        expectSegment = true;
-                    }
-                    //国家地理去广告
-                    else if (line.StartsWith("#UPLYNK-SEGMENT"))
-                    {
-                        if (line.Contains(",ad"))
-                            isAd = true;
-                        else if (line.Contains(",segment"))
-                            isAd = false;
-                    }
-                    //国家地理去广告
-                    else if (isAd)
-                    {
-                        continue;
-                    }
-                    //解析定义的分段长度
-                    else if (line.StartsWith(HLSTags.ext_x_targetduration))
-                    {
-                        targetDuration = Convert.ToInt32(Convert.ToDouble(line.Replace(HLSTags.ext_x_targetduration + ":", "").Trim()));
-                    }
-                    //解析起始编号
-                    else if (line.StartsWith(HLSTags.ext_x_media_sequence))
-                    {
-                        segIndex = Convert.ToInt64(line.Replace(HLSTags.ext_x_media_sequence + ":", "").Trim());
-                        startIndex = segIndex;
-                    }
-                    else if (line.StartsWith(HLSTags.ext_x_discontinuity_sequence)) ;
-                    else if (line.StartsWith(HLSTags.ext_x_program_date_time))
-                    {
-                        if (string.IsNullOrEmpty(FFmpeg.REC_TIME))
+                        //国家地理去广告
+                        else if (line.StartsWith("#UPLYNK-SEGMENT"))
                         {
-                            FFmpeg.REC_TIME = line.Replace(HLSTags.ext_x_program_date_time + ":", "").Trim();
+                            if (line.Contains(",ad"))
+                                isAd = true;
+                            else if (line.Contains(",segment"))
+                                isAd = false;
                         }
-                    }
-                    //解析不连续标记，需要单独合并（timestamp不同）
-                    else if (line.StartsWith(HLSTags.ext_x_discontinuity))
-                    {
-                        //修复优酷去除广告后的遗留问题
-                        if (hasAd && parts.Count > 0)
+                        //国家地理去广告
+                        else if (isAd)
                         {
-                            segments = (JArray)parts[parts.Count - 1];
-                            parts.RemoveAt(parts.Count - 1);
-                            hasAd = false;
                             continue;
                         }
-                        //常规情况的#EXT-X-DISCONTINUITY标记，新建part
-                        if (!hasAd && segments.Count >= 1)
+                        //解析定义的分段长度
+                        else if (line.StartsWith(HLSTags.ext_x_targetduration))
                         {
-                            parts.Add(segments);
-                            segments = new JArray();
+                            targetDuration = Convert.ToInt32(Convert.ToDouble(line.Replace(HLSTags.ext_x_targetduration + ":", "").Trim()));
                         }
-                    }
-                    else if (line.StartsWith(HLSTags.ext_x_cue_out)) ;
-                    else if (line.StartsWith(HLSTags.ext_x_cue_out_start)) ;
-                    else if (line.StartsWith(HLSTags.ext_x_cue_span)) ;
-                    else if (line.StartsWith(HLSTags.ext_x_version)) ;
-                    else if (line.StartsWith(HLSTags.ext_x_allow_cache)) ;
-                    //解析KEY
-                    else if (line.StartsWith(HLSTags.ext_x_key))
-                    {
-                        //自定义KEY情况 判断是否需要读取IV
-                        if (!string.IsNullOrEmpty(KeyFile) || !string.IsNullOrEmpty(KeyBase64))
+                        //解析起始编号
+                        else if (line.StartsWith(HLSTags.ext_x_media_sequence))
                         {
-                            if (m3u8CurrentKey[2] == "" && line.Contains("IV=0x"))
+                            segIndex = Convert.ToInt64(line.Replace(HLSTags.ext_x_media_sequence + ":", "").Trim());
+                            startIndex = segIndex;
+                        }
+                        else if (line.StartsWith(HLSTags.ext_x_discontinuity_sequence)) ;
+                        else if (line.StartsWith(HLSTags.ext_x_program_date_time))
+                        {
+                            if (string.IsNullOrEmpty(FFmpeg.REC_TIME))
                             {
-                                var temp = Global.GetTagAttribute(line.Replace(HLSTags.ext_x_key + ":", ""), "IV");
-                                m3u8CurrentKey[2] = temp; //使用m3u8中的IV
+                                FFmpeg.REC_TIME = line.Replace(HLSTags.ext_x_program_date_time + ":", "").Trim();
                             }
                         }
-                        else
+                        //解析不连续标记，需要单独合并（timestamp不同）
+                        else if (line.StartsWith(HLSTags.ext_x_discontinuity))
                         {
-                            m3u8CurrentKey = ParseKey(line);
-                            //存储为上一行的key信息
-                            lastKeyLine = line;
+                            //修复优酷去除广告后的遗留问题
+                            if (hasAd && parts.Count > 0)
+                            {
+                                segments = (JArray)parts[parts.Count - 1];
+                                parts.RemoveAt(parts.Count - 1);
+                                hasAd = false;
+                                continue;
+                            }
+                            //常规情况的#EXT-X-DISCONTINUITY标记，新建part
+                            if (!hasAd && segments.Count >= 1)
+                            {
+                                parts.Add(segments);
+                                segments = new JArray();
+                            }
                         }
-                    }
-                    //解析分片时长(暂时不考虑标题属性)
-                    else if (line.StartsWith(HLSTags.extinf))
-                    {
-                        string[] tmp = line.Replace(HLSTags.extinf + ":", "").Split(',');
-                        segDuration = Convert.ToDouble(tmp[0]);
-                        segInfo["index"] = segIndex;
-                        segInfo["method"] = m3u8CurrentKey[0];
-                        //是否有加密，有的话写入KEY和IV
-                        if (m3u8CurrentKey[0] != "NONE")
+                        else if (line.StartsWith(HLSTags.ext_x_cue_out)) ;
+                        else if (line.StartsWith(HLSTags.ext_x_cue_out_start)) ;
+                        else if (line.StartsWith(HLSTags.ext_x_cue_span)) ;
+                        else if (line.StartsWith(HLSTags.ext_x_version)) ;
+                        else if (line.StartsWith(HLSTags.ext_x_allow_cache)) ;
+                        //解析KEY
+                        else if (line.StartsWith(HLSTags.ext_x_key))
                         {
-                            segInfo["key"] = m3u8CurrentKey[1];
-                            //没有读取到IV，自己生成
-                            if (m3u8CurrentKey[2] == "")
-                                segInfo["iv"] = "0x" + Convert.ToString(segIndex, 16).PadLeft(32, '0');
+                            //自定义KEY情况 判断是否需要读取IV
+                            if (!string.IsNullOrEmpty(KeyFile) || !string.IsNullOrEmpty(KeyBase64))
+                            {
+                                if (m3u8CurrentKey[2] == "" && line.Contains("IV=0x"))
+                                {
+                                    var temp = Global.GetTagAttribute(line.Replace(HLSTags.ext_x_key + ":", ""), "IV");
+                                    m3u8CurrentKey[2] = temp; //使用m3u8中的IV
+                                }
+                            }
                             else
-                                segInfo["iv"] = m3u8CurrentKey[2];
+                            {
+                                m3u8CurrentKey = ParseKey(line);
+                                //存储为上一行的key信息
+                                lastKeyLine = line;
+                            }
                         }
-                        totalDuration += segDuration;
-                        segInfo["duration"] = segDuration;
-                        expectSegment = true;
-                        segIndex++;
-                    }
-                    //解析STREAM属性
-                    else if (line.StartsWith(HLSTags.ext_x_stream_inf))
-                    {
-                        expectPlaylist = true;
-                        string bandwidth = Global.GetTagAttribute(line, "BANDWIDTH");
-                        string average_bandwidth = Global.GetTagAttribute(line, "AVERAGE-BANDWIDTH");
-                        string codecs = Global.GetTagAttribute(line, "CODECS");
-                        string resolution = Global.GetTagAttribute(line, "RESOLUTION");
-                        string frame_rate = Global.GetTagAttribute(line, "FRAME-RATE");
-                        string hdcp_level = Global.GetTagAttribute(line, "HDCP-LEVEL");
-                        string audio = Global.GetTagAttribute(line, "AUDIO");
-                        string video = Global.GetTagAttribute(line, "VIDEO");
-                        string subtitles = Global.GetTagAttribute(line, "SUBTITLES");
-                        string closed_captions = Global.GetTagAttribute(line, "CLOSED-CAPTIONS");
-                        extList = new string[] { bandwidth, average_bandwidth, codecs, resolution,
+                        //解析分片时长(暂时不考虑标题属性)
+                        else if (line.StartsWith(HLSTags.extinf))
+                        {
+                            string[] tmp = line.Replace(HLSTags.extinf + ":", "").Split(',');
+                            segDuration = Convert.ToDouble(tmp[0]);
+                            segInfo["index"] = segIndex;
+                            segInfo["method"] = m3u8CurrentKey[0];
+                            //是否有加密，有的话写入KEY和IV
+                            if (m3u8CurrentKey[0] != "NONE")
+                            {
+                                segInfo["key"] = m3u8CurrentKey[1];
+                                //没有读取到IV，自己生成
+                                if (m3u8CurrentKey[2] == "")
+                                    segInfo["iv"] = "0x" + Convert.ToString(segIndex, 16).PadLeft(32, '0');
+                                else
+                                    segInfo["iv"] = m3u8CurrentKey[2];
+                            }
+                            totalDuration += segDuration;
+                            segInfo["duration"] = segDuration;
+                            expectSegment = true;
+                            segIndex++;
+                        }
+                        //解析STREAM属性
+                        else if (line.StartsWith(HLSTags.ext_x_stream_inf))
+                        {
+                            expectPlaylist = true;
+                            string bandwidth = Global.GetTagAttribute(line, "BANDWIDTH");
+                            string average_bandwidth = Global.GetTagAttribute(line, "AVERAGE-BANDWIDTH");
+                            string codecs = Global.GetTagAttribute(line, "CODECS");
+                            string resolution = Global.GetTagAttribute(line, "RESOLUTION");
+                            string frame_rate = Global.GetTagAttribute(line, "FRAME-RATE");
+                            string hdcp_level = Global.GetTagAttribute(line, "HDCP-LEVEL");
+                            string audio = Global.GetTagAttribute(line, "AUDIO");
+                            string video = Global.GetTagAttribute(line, "VIDEO");
+                            string subtitles = Global.GetTagAttribute(line, "SUBTITLES");
+                            string closed_captions = Global.GetTagAttribute(line, "CLOSED-CAPTIONS");
+                            extList = new string[] { bandwidth, average_bandwidth, codecs, resolution,
                             frame_rate,hdcp_level,audio,video,subtitles,closed_captions };
-                    }
-                    else if (line.StartsWith(HLSTags.ext_x_i_frame_stream_inf)) ;
-                    else if (line.StartsWith(HLSTags.ext_x_media))
-                    {
-                        var groupId = Global.GetTagAttribute(line, "GROUP-ID");
-                        if (Global.GetTagAttribute(line, "TYPE") == "AUDIO")
+                        }
+                        else if (line.StartsWith(HLSTags.ext_x_i_frame_stream_inf)) ;
+                        else if (line.StartsWith(HLSTags.ext_x_media))
                         {
-                            var audio = new Audio();
-                            audio.Channels = Global.GetTagAttribute(line, "CHANNELS");
-                            audio.Language = Global.GetTagAttribute(line, "LANGUAGE");
-                            audio.Name = Global.GetTagAttribute(line, "NAME");
-                            audio.Uri = CombineURL(BaseUrl, Global.GetTagAttribute(line, "URI"));
-                            if (!MEDIA_AUDIO_GROUP.ContainsKey(groupId))
+                            var groupId = Global.GetTagAttribute(line, "GROUP-ID");
+                            if (Global.GetTagAttribute(line, "TYPE") == "AUDIO")
                             {
-                                MEDIA_AUDIO_GROUP.Add(groupId, new List<Audio>() { audio });
+                                var audio = new Audio();
+                                audio.Channels = Global.GetTagAttribute(line, "CHANNELS");
+                                audio.Language = Global.GetTagAttribute(line, "LANGUAGE");
+                                audio.Name = Global.GetTagAttribute(line, "NAME");
+                                audio.Uri = CombineURL(BaseUrl, Global.GetTagAttribute(line, "URI"));
+                                if (!MEDIA_AUDIO_GROUP.ContainsKey(groupId))
+                                {
+                                    MEDIA_AUDIO_GROUP.Add(groupId, new List<Audio>() { audio });
+                                }
+                                else
+                                {
+                                    MEDIA_AUDIO_GROUP[groupId].Add(audio);
+                                }
                             }
-                            else
+                            else if (Global.GetTagAttribute(line, "TYPE") == "SUBTITLES")
                             {
-                                MEDIA_AUDIO_GROUP[groupId].Add(audio);
+                                var sub = new Subtitle();
+                                sub.Language = Global.GetTagAttribute(line, "LANGUAGE");
+                                sub.Name = Global.GetTagAttribute(line, "NAME");
+                                sub.Uri = CombineURL(BaseUrl, Global.GetTagAttribute(line, "URI"));
+                                if (!MEDIA_SUB_GROUP.ContainsKey(groupId))
+                                {
+                                    MEDIA_SUB_GROUP.Add(groupId, new List<Subtitle>() { sub });
+                                }
+                                else
+                                {
+                                    MEDIA_SUB_GROUP[groupId].Add(sub);
+                                }
                             }
                         }
-                        else if (Global.GetTagAttribute(line, "TYPE") == "SUBTITLES")
+                        else if (line.StartsWith(HLSTags.ext_x_playlist_type)) ;
+                        else if (line.StartsWith(HLSTags.ext_i_frames_only))
                         {
-                            var sub = new Subtitle();
-                            sub.Language = Global.GetTagAttribute(line, "LANGUAGE");
-                            sub.Name = Global.GetTagAttribute(line, "NAME");
-                            sub.Uri = CombineURL(BaseUrl, Global.GetTagAttribute(line, "URI"));
-                            if (!MEDIA_SUB_GROUP.ContainsKey(groupId))
-                            {
-                                MEDIA_SUB_GROUP.Add(groupId, new List<Subtitle>() { sub });
-                            }
-                            else
-                            {
-                                MEDIA_SUB_GROUP[groupId].Add(sub);
-                            }
+                            isIFramesOnly = true;
                         }
-                    }
-                    else if (line.StartsWith(HLSTags.ext_x_playlist_type)) ;
-                    else if (line.StartsWith(HLSTags.ext_i_frames_only))
-                    {
-                        isIFramesOnly = true;
-                    }
-                    else if (line.StartsWith(HLSTags.ext_is_independent_segments))
-                    {
-                        isIndependentSegments = true;
-                    }
-                    //m3u8主体结束
-                    else if (line.StartsWith(HLSTags.ext_x_endlist))
-                    {
-                        if (segments.Count > 0)
-                            parts.Add(segments);
-                        segments = new JArray();
-                        isEndlist = true;
-                    }
-                    //#EXT-X-MAP
-                    else if (line.StartsWith(HLSTags.ext_x_map))
-                    {
-                        if (extMAP[0] == "")
+                        else if (line.StartsWith(HLSTags.ext_is_independent_segments))
                         {
-                            extMAP[0] = Global.GetTagAttribute(line, "URI");
-                            if (line.Contains("BYTERANGE"))
-                                extMAP[1] = Global.GetTagAttribute(line, "BYTERANGE");
-                            if (!extMAP[0].StartsWith("http")) extMAP[0] = CombineURL(BaseUrl, extMAP[0]);
+                            isIndependentSegments = true;
                         }
-                        //遇到了其他的map，说明已经不是一个视频了，全部丢弃即可
-                        else
+                        //m3u8主体结束
+                        else if (line.StartsWith(HLSTags.ext_x_endlist))
                         {
                             if (segments.Count > 0)
                                 parts.Add(segments);
                             segments = new JArray();
                             isEndlist = true;
-                            break;
                         }
-                    }
-                    else if (line.StartsWith(HLSTags.ext_x_start)) ;
-                    //评论行不解析
-                    else if (line.StartsWith("#")) continue;
-                    //空白行不解析
-                    else if (line.StartsWith("\r\n")) continue;
-                    //解析分片的地址
-                    else if (expectSegment)
-                    {
-                        segUrl = CombineURL(BaseUrl, line);
-                        if (M3u8Url.Contains("?__gda__"))
+                        //#EXT-X-MAP
+                        else if (line.StartsWith(HLSTags.ext_x_map))
                         {
-                            segUrl += new Regex("\\?__gda__.*").Match(M3u8Url).Value;
-                        }
-                        if (M3u8Url.Contains("//dlsc.hcs.cmvideo.cn") && (segUrl.EndsWith(".ts") || segUrl.EndsWith(".mp4")))
-                        {
-                            segUrl += new Regex("\\?.*").Match(M3u8Url).Value;
-                        }
-                        segInfo.Add("segUri", segUrl);
-                        segments.Add(segInfo);
-                        segInfo = new JObject();
-                        //优酷的广告分段则清除此分片
-                        //需要注意，遇到广告说明程序对上文的#EXT-X-DISCONTINUITY做出的动作是不必要的，
-                        //其实上下文是同一种编码，需要恢复到原先的part上
-                        if (DelAd && segUrl.Contains("ccode=") && segUrl.Contains("/ad/") && segUrl.Contains("duration="))
-                        {
-                            segments.RemoveAt(segments.Count - 1);
-                            segIndex--;
-                            hasAd = true;
-                        }
-                        //优酷广告(4K分辨率测试)
-                        if (DelAd && segUrl.Contains("ccode=0902") && segUrl.Contains("duration="))
-                        {
-                            segments.RemoveAt(segments.Count - 1);
-                            segIndex--;
-                            hasAd = true;
-                        }
-                        expectSegment = false;
-                    }
-                    //解析STREAM属性的URI
-                    else if (expectPlaylist)
-                    {
-                        string listUrl;
-                        listUrl = CombineURL(BaseUrl, line);
-                        if (M3u8Url.Contains("?__gda__"))
-                        {
-                            listUrl += new Regex("\\?__gda__.*").Match(M3u8Url).Value;
-                        }
-                        StringBuilder sb = new StringBuilder();
-                        sb.Append("{");
-                        sb.Append("\"URL\":\"" + listUrl + "\",");
-                        for (int i = 0; i < 10; i++)
-                        {
-                            if (extList[i] != "")
+                            if (extMAP[0] == "")
                             {
-                                switch (i)
-                                {
-                                    case 0:
-                                        sb.Append("\"BANDWIDTH\":\"" + extList[i] + "\",");
-                                        break;
-                                    case 1:
-                                        sb.Append("\"AVERAGE-BANDWIDTH\":\"" + extList[i] + "\",");
-                                        break;
-                                    case 2:
-                                        sb.Append("\"CODECS\":\"" + extList[i] + "\",");
-                                        break;
-                                    case 3:
-                                        sb.Append("\"RESOLUTION\":\"" + extList[i] + "\",");
-                                        break;
-                                    case 4:
-                                        sb.Append("\"FRAME-RATE\":\"" + extList[i] + "\",");
-                                        break;
-                                    case 5:
-                                        sb.Append("\"HDCP-LEVEL\":\"" + extList[i] + "\",");
-                                        break;
-                                    case 6:
-                                        sb.Append("\"AUDIO\":\"" + extList[i] + "\",");
-                                        break;
-                                    case 7:
-                                        sb.Append("\"VIDEO\":\"" + extList[i] + "\",");
-                                        break;
-                                    case 8:
-                                        sb.Append("\"SUBTITLES\":\"" + extList[i] + "\",");
-                                        break;
-                                    case 9:
-                                        sb.Append("\"CLOSED-CAPTIONS\":\"" + extList[i] + "\",");
-                                        break;
-                                }
+                                extMAP[0] = Global.GetTagAttribute(line, "URI");
+                                if (line.Contains("BYTERANGE"))
+                                    extMAP[1] = Global.GetTagAttribute(line, "BYTERANGE");
+                                if (!extMAP[0].StartsWith("http")) extMAP[0] = CombineURL(BaseUrl, extMAP[0]);
+                            }
+                            //遇到了其他的map，说明已经不是一个视频了，全部丢弃即可
+                            else
+                            {
+                                if (segments.Count > 0)
+                                    parts.Add(segments);
+                                segments = new JArray();
+                                isEndlist = true;
+                                break;
                             }
                         }
-                        sb.Append("}");
-                        extLists.Add(sb.ToString().Replace(",}", "}"));
-                        if (Convert.ToInt64(extList[0]) >= bestBandwidth)
+                        else if (line.StartsWith(HLSTags.ext_x_start)) ;
+                        //评论行不解析
+                        else if (line.StartsWith("#")) continue;
+                        //空白行不解析
+                        else if (line.StartsWith("\r\n")) continue;
+                        //解析分片的地址
+                        else if (expectSegment)
                         {
-                            bestBandwidth = Convert.ToInt64(extList[0]);
-                            bestUrl = listUrl;
-                            bestUrlAudio = extList[6];
-                            bestUrlSub = extList[8];
+                            segUrl = CombineURL(BaseUrl, line);
+                            if (M3u8Url.Contains("?__gda__"))
+                            {
+                                segUrl += new Regex("\\?__gda__.*").Match(M3u8Url).Value;
+                            }
+                            if (M3u8Url.Contains("//dlsc.hcs.cmvideo.cn") && (segUrl.EndsWith(".ts") || segUrl.EndsWith(".mp4")))
+                            {
+                                segUrl += new Regex("\\?.*").Match(M3u8Url).Value;
+                            }
+                            segInfo.Add("segUri", segUrl);
+                            segments.Add(segInfo);
+                            segInfo = new JObject();
+                            //优酷的广告分段则清除此分片
+                            //需要注意，遇到广告说明程序对上文的#EXT-X-DISCONTINUITY做出的动作是不必要的，
+                            //其实上下文是同一种编码，需要恢复到原先的part上
+                            if (DelAd && segUrl.Contains("ccode=") && segUrl.Contains("/ad/") && segUrl.Contains("duration="))
+                            {
+                                segments.RemoveAt(segments.Count - 1);
+                                segIndex--;
+                                hasAd = true;
+                            }
+                            //优酷广告(4K分辨率测试)
+                            if (DelAd && segUrl.Contains("ccode=0902") && segUrl.Contains("duration="))
+                            {
+                                segments.RemoveAt(segments.Count - 1);
+                                segIndex--;
+                                hasAd = true;
+                            }
+                            expectSegment = false;
                         }
-                        extList = new string[8];
-                        expectPlaylist = false;
+                        //解析STREAM属性的URI
+                        else if (expectPlaylist)
+                        {
+                            string listUrl;
+                            listUrl = CombineURL(BaseUrl, line);
+                            if (M3u8Url.Contains("?__gda__"))
+                            {
+                                listUrl += new Regex("\\?__gda__.*").Match(M3u8Url).Value;
+                            }
+                            StringBuilder sb = new StringBuilder();
+                            sb.Append("{");
+                            sb.Append("\"URL\":\"" + listUrl + "\",");
+                            for (int i = 0; i < 10; i++)
+                            {
+                                if (extList[i] != "")
+                                {
+                                    switch (i)
+                                    {
+                                        case 0:
+                                            sb.Append("\"BANDWIDTH\":\"" + extList[i] + "\",");
+                                            break;
+                                        case 1:
+                                            sb.Append("\"AVERAGE-BANDWIDTH\":\"" + extList[i] + "\",");
+                                            break;
+                                        case 2:
+                                            sb.Append("\"CODECS\":\"" + extList[i] + "\",");
+                                            break;
+                                        case 3:
+                                            sb.Append("\"RESOLUTION\":\"" + extList[i] + "\",");
+                                            break;
+                                        case 4:
+                                            sb.Append("\"FRAME-RATE\":\"" + extList[i] + "\",");
+                                            break;
+                                        case 5:
+                                            sb.Append("\"HDCP-LEVEL\":\"" + extList[i] + "\",");
+                                            break;
+                                        case 6:
+                                            sb.Append("\"AUDIO\":\"" + extList[i] + "\",");
+                                            break;
+                                        case 7:
+                                            sb.Append("\"VIDEO\":\"" + extList[i] + "\",");
+                                            break;
+                                        case 8:
+                                            sb.Append("\"SUBTITLES\":\"" + extList[i] + "\",");
+                                            break;
+                                        case 9:
+                                            sb.Append("\"CLOSED-CAPTIONS\":\"" + extList[i] + "\",");
+                                            break;
+                                    }
+                                }
+                            }
+                            sb.Append("}");
+                            extLists.Add(sb.ToString().Replace(",}", "}"));
+                            if (Convert.ToInt64(extList[0]) >= bestBandwidth)
+                            {
+                                bestBandwidth = Convert.ToInt64(extList[0]);
+                                bestUrl = listUrl;
+                                bestUrlAudio = extList[6];
+                                bestUrlSub = extList[8];
+                            }
+                            extList = new string[8];
+                            expectPlaylist = false;
+                        }
                     }
                 }
-            }
 
+            }
+            catch (System.Exception e)
+            {
+                LOGGER.WriteLineError(e.Message);
+                throw;
+            }
             if (isM3u == false)
             {
                 LOGGER.WriteLineError(strings.invalidM3u8);
@@ -977,7 +986,7 @@ namespace N_m3u8DL_CLI
 
             Uri uri1 = new Uri(baseurl);  //这里直接传完整的URL即可
             Uri uri2 = new Uri(uri1, url);  
-            ForceCanonicalPathAndQuery(uri2);  //兼容XP的低版本.Net
+            //ForceCanonicalPathAndQuery(uri2);  //兼容XP的低版本.Net
             url = uri2.ToString();
 
 
